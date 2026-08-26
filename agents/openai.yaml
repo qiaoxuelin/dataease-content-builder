@@ -1,0 +1,5 @@
+interface:
+  display_name: "DataEase 内容搭建"
+  short_description: "在指定目录创建并验证 DataEase SQL 数据集、仪表盘与筛选联动"
+  default_prompt: "使用 $dataease-content-builder 在指定 DataEase 目录创建数据集和仪表盘，并完成发布验证。"
+
