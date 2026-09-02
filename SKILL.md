@@ -21,7 +21,7 @@ Read-only discovery is allowed when relevant. Creating, updating, publishing, mo
 ## Workflow
 
 1. Read [references/workflow.md](references/workflow.md) for folder resolution, idempotency, API calls, and verification.
-2. Prefer `scripts/dataease_openapi.mjs` for ASK requests, SQL datasets, dashboard inspection/update/publication, and chart queries instead of rebuilding authentication and transport logic.
+2. Prefer `scripts/dataease_openapi.mjs` for ASK requests, SQL datasets, dashboard inspection/lint/update/publication, and chart queries instead of rebuilding authentication and transport logic.
 3. For dashboards or query filters, also read [references/dashboard-patterns.md](references/dashboard-patterns.md). Reuse a valid dashboard/view/query component from the same DataEase version rather than inventing a canvas schema.
 4. For cohort, retention, LTV, ROI, currency conversion, ratio summaries, or cross-source work, also read [references/metric-contracts.md](references/metric-contracts.md) and write the metric/time/unit contract before building.
 5. Before updating a dataset, inventory its dashboard consumers and dry-run the schema diff. Preserve the existing SQL table ID, field IDs, and internal names for unchanged fields. Treat removals, renames, and type changes as breaking changes.
@@ -43,6 +43,7 @@ Read-only discovery is allowed when relevant. Creating, updating, publishing, mo
 - Treat database raw event timestamps such as `event_time` as UTC0. Unless the user explicitly requests a local-day view, derive dates and hours directly from the raw timestamp; never add an implicit UTC+8 offset.
 - For region-scoped daily cohort dashboards, `全部` uses the raw UTC0 day boundary. Each concrete country uses its explicit configured minute offset to derive local registration and event dates; use the same offset rule across every joined metric.
 - For ratios and cumulative metrics, aggregate the eligible numerator and denominator first; never average row-level ratios. Exclude immature or null metric rows from both the numerator and the corresponding denominator.
+- For lifecycle-day numbering, UTC boundaries, IAP/IAA units, net revenue, and AEO/Install attribution, follow `references/metric-contracts.md`; never infer day semantics or units from a short chart label alone.
 - Run chart verification serially per datasource and keep the query set representative. On a connection-pool exhaustion error, stop unchanged retries and report the capacity boundary; datasource validation or an exact-config pool rebuild requires separate authorization.
 - A failed post-write verification does not prove that the write rolled back. Re-read the draft before retrying, recovering, or publishing.
 - Distinguish API/configuration verification from visual verification. For dashboards, both are required when layout or filter behavior matters.
@@ -51,4 +52,4 @@ Read-only discovery is allowed when relevant. Creating, updating, publishing, mo
 
 ## Script
 
-Run `node scripts/dataease_openapi.mjs --help` for syntax. The helper supports generic ASK requests, custom SQL datasets, dashboard inspection/update/publication, and chart queries. Live dataset/dashboard writes remain dry-run by default. It refuses plaintext HTTP unless `--allow-http` is supplied after explicit authorization.
+Run `node scripts/dataease_openapi.mjs --help` for syntax. The helper supports generic ASK requests, custom SQL datasets, read-only dashboard lint, dashboard inspection/update/publication, and chart queries. Live dataset/dashboard writes remain dry-run by default. It refuses plaintext HTTP unless `--allow-http` is supplied after explicit authorization.

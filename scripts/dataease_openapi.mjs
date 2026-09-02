@@ -10,7 +10,7 @@ function usage() {
 Usage:
   node dataease_openapi.mjs --config <file> [--allow-http] request <METHOD> <PATH> [@body.json|-]
   node dataease_openapi.mjs --config <file> [--allow-http] sql-dataset <create|update> @spec.json
-  node dataease_openapi.mjs --config <file> [--allow-http] dashboard <inspect|update|publish> @spec.json
+  node dataease_openapi.mjs --config <file> [--allow-http] dashboard <inspect|lint|update|publish> @spec.json
   node dataease_openapi.mjs --config <file> [--allow-http] chart <query|delete-fields> @spec.json
 
 Notes:
@@ -18,6 +18,7 @@ Notes:
   - Dataset and dashboard mutations are dry-run by default; set dryRun to false for a live write.
   - Live SQL dataset updates require schemaContract.expectedFields and preserve unchanged field identities.
   - Live dashboard writes require explicit baseline/draft/view expectations; unacknowledged draft deltas are blocked.
+  - Dashboard lint is read-only and does not execute chart-data queries.
   - Quote every DataEase ID in JSON. IDs can exceed JavaScript's safe integer range.
   - Day-only chart queries still send epoch milliseconds; use dateRange with an explicit utcOffset.
   - SQL dataset dry-run is the default; set \"dryRun\": false in the spec for a live write.
@@ -491,6 +492,197 @@ function dashboardSummary(dashboard, source) {
   };
 }
 
+function walkValues(value, path = '', output = []) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => walkValues(item, `${path}[${index}]`, output));
+  } else if (value && typeof value === 'object') {
+    Object.entries(value).forEach(([key, item]) => {
+      const nextPath = path ? `${path}.${key}` : key;
+      if (item && typeof item === 'object') walkValues(item, nextPath, output);
+      else output.push({ path: nextPath, key, value: item });
+    });
+  }
+  return output;
+}
+
+function firstFinite(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function componentGeometry(component) {
+  const style = parseMaybeJson(component.style, {});
+  const x = firstFinite(component.x, component.left, style.x, style.left);
+  const y = firstFinite(component.y, component.top, style.y, style.top);
+  const width = firstFinite(component.sizeX, component.width, style.width);
+  const height = firstFinite(component.sizeY, component.height, style.height);
+  if ([x, y, width, height].some((value) => value === null)) return null;
+  return { x, y, width, height, right: x + width, bottom: y + height };
+}
+
+function dashboardStructureHash(dashboard) {
+  return createHash('sha256').update(JSON.stringify({
+    canvasViewInfo: parseMaybeJson(dashboard.canvasViewInfo, {}),
+    componentData: parseMaybeJson(dashboard.componentData, []),
+  })).digest('hex');
+}
+
+function lintFilterMappings(filters, activeViewIds) {
+  const active = new Set(activeViewIds);
+  const findings = [];
+  const coverage = [];
+  for (const filter of filters) {
+    const checked = (filter.checkedFields || []).map(String);
+    const mapping = filter.checkedFieldsMap || {};
+    const missingMap = checked.filter((id) => !Object.hasOwn(mapping, id));
+    const staleChecked = checked.filter((id) => !active.has(id));
+    const staleMap = Object.keys(mapping).filter((id) => !active.has(id));
+    const unmappedActive = activeViewIds.filter((id) => !checked.includes(id));
+    if (missingMap.length) findings.push({
+      severity: 'error',
+      code: 'filter-missing-field-map',
+      componentId: filter.componentId,
+      filter: filter.name,
+      viewIds: missingMap,
+    });
+    if (staleChecked.length || staleMap.length) findings.push({
+      severity: 'error',
+      code: 'filter-stale-view-reference',
+      componentId: filter.componentId,
+      filter: filter.name,
+      checkedViewIds: staleChecked,
+      mappedViewIds: staleMap,
+    });
+    coverage.push({
+      componentId: filter.componentId,
+      filter: filter.name,
+      controlledViewIds: checked,
+      unmappedActiveViewIds: unmappedActive,
+    });
+  }
+  return { findings, coverage };
+}
+
+function lintFormatting(views) {
+  const findings = [];
+  for (const [viewId, view] of Object.entries(views)) {
+    const entries = walkValues(view);
+    const percentFormatters = entries.filter(({ path, value }) => (
+      /formatterCfg/i.test(path) && typeof value === 'string' && value.includes('%')
+    ));
+    const extraPercentSuffixes = entries.filter(({ path, key, value }) => (
+      !/formatterCfg/i.test(path)
+      && /suffix|axisLabelFormatter|labelFormatter|tooltip/i.test(key)
+      && typeof value === 'string'
+      && value.includes('%')
+    ));
+    if (percentFormatters.length && extraPercentSuffixes.length) findings.push({
+      severity: 'warning',
+      code: 'duplicate-percent-format-owner',
+      viewId,
+      fieldFormatterPaths: percentFormatters.map(({ path }) => path),
+      additionalSuffixPaths: extraPercentSuffixes.map(({ path }) => path),
+    });
+  }
+  return findings;
+}
+
+function lintGeometry(dashboard, components, views, activeViewIds, thresholds = {}) {
+  const findings = [];
+  const canvasStyle = parseMaybeJson(
+    dashboard.canvasStyleData,
+    parseMaybeJson(dashboard.canvasStyle, {}),
+  );
+  const canvasPixelWidth = firstFinite(dashboard.canvasWidth, canvasStyle.width);
+  const canvasPixelHeight = firstFinite(dashboard.canvasHeight, canvasStyle.height);
+  const canvasGridWidth = thresholds.canvasGridWidth === undefined
+    ? null
+    : firstFinite(thresholds.canvasGridWidth);
+  const canvasGridHeight = thresholds.canvasGridHeight === undefined
+    ? null
+    : firstFinite(thresholds.canvasGridHeight);
+  const active = new Set(activeViewIds);
+  const positioned = components
+    .filter((component) => active.has(String(component.id)) || component.innerType === 'VQuery')
+    .map((component) => ({ id: String(component.id), innerType: component.innerType, box: componentGeometry(component) }))
+    .filter(({ box }) => box && box.width > 0 && box.height > 0);
+
+  for (const item of positioned) {
+    if ((canvasGridWidth !== null && item.box.right > canvasGridWidth)
+      || (canvasGridHeight !== null && item.box.bottom > canvasGridHeight)
+      || item.box.x < 0 || item.box.y < 0) {
+      findings.push({ severity: 'error', code: 'component-outside-canvas', componentId: item.id, geometry: item.box });
+    }
+  }
+
+  const charts = positioned.filter(({ innerType }) => innerType !== 'VQuery');
+  for (let left = 0; left < charts.length; left += 1) {
+    for (let right = left + 1; right < charts.length; right += 1) {
+      const a = charts[left];
+      const b = charts[right];
+      const overlaps = a.box.x < b.box.right && a.box.right > b.box.x
+        && a.box.y < b.box.bottom && a.box.bottom > b.box.y;
+      if (overlaps) findings.push({
+        severity: 'warning',
+        code: 'chart-overlap',
+        componentIds: [a.id, b.id],
+      });
+    }
+  }
+
+  const maxBottom = positioned.reduce((value, item) => Math.max(value, item.box.bottom), 0);
+  const bottomBlankRatio = canvasGridHeight && maxBottom <= canvasGridHeight
+    ? (canvasGridHeight - maxBottom) / canvasGridHeight
+    : null;
+  const maxBottomBlankRatio = Number(thresholds.maxBottomBlankRatio ?? 0.25);
+  if (bottomBlankRatio !== null && bottomBlankRatio > maxBottomBlankRatio) findings.push({
+    severity: 'warning',
+    code: 'excess-bottom-blank-space',
+    ratio: Number(bottomBlankRatio.toFixed(4)),
+    threshold: maxBottomBlankRatio,
+  });
+
+  const fontRules = [
+    ['minTitleFontSize', /title.*fontSize/i],
+    ['minAxisFontSize', /axis.*fontSize/i],
+    ['minTableFontSize', /table.*fontSize|fontSize.*table/i],
+  ];
+  const values = walkValues({ components, views, canvasStyle });
+  for (const [thresholdName, pathPattern] of fontRules) {
+    if (thresholds[thresholdName] === undefined) continue;
+    const minimum = Number(thresholds[thresholdName]);
+    const tooSmall = values.filter(({ path, value }) => (
+      pathPattern.test(path) && Number.isFinite(Number(value)) && Number(value) > 0 && Number(value) < minimum
+    ));
+    if (tooSmall.length) findings.push({
+      severity: 'warning',
+      code: 'font-below-threshold',
+      thresholdName,
+      minimum,
+      paths: tooSmall.map(({ path, value }) => ({ path, value })),
+    });
+  }
+
+  return {
+    findings,
+    geometry: {
+      canvasPixelWidth,
+      canvasPixelHeight,
+      canvasGridWidth,
+      canvasGridHeight,
+      scale: dashboard.scale ?? canvasStyle.scale ?? null,
+      scaleWidth: dashboard.scaleWidth ?? canvasStyle.scaleWidth ?? null,
+      scaleHeight: dashboard.scaleHeight ?? canvasStyle.scaleHeight ?? null,
+      maxComponentBottom: maxBottom,
+      bottomBlankRatio: bottomBlankRatio === null ? null : Number(bottomBlankRatio.toFixed(4)),
+    },
+  };
+}
+
 function encodeCalculatedAxisFields(dashboard) {
   const copy = structuredClone(dashboard);
   const views = parseMaybeJson(copy.canvasViewInfo, {});
@@ -518,6 +710,85 @@ async function dashboardInspect(config, specArg) {
   if (!['main', 'main-edit'].includes(source)) throw new Error('source must be main or main-edit');
   const dashboard = await getDashboard(config, dashboardId, source);
   process.stdout.write(`${JSON.stringify(dashboardSummary(dashboard, source), null, 2)}\n`);
+}
+
+function dashboardLintSnapshot(dashboard, source, thresholds) {
+  const summary = dashboardSummary(dashboard, source);
+  const components = parseMaybeJson(dashboard.componentData, []);
+  const views = parseMaybeJson(dashboard.canvasViewInfo, {});
+  const queryViewIds = components
+    .filter((component) => component.innerType === 'VQuery')
+    .map((component) => String(component.id));
+  const recognized = new Set([...summary.activeViewIds, ...queryViewIds]);
+  const orphanCanvasViewIds = summary.viewIds.filter((id) => !recognized.has(id));
+  const filterLint = lintFilterMappings(summary.filters, summary.activeViewIds);
+  const geometryLint = lintGeometry(dashboard, components, views, summary.activeViewIds, thresholds);
+  const findings = [
+    ...(orphanCanvasViewIds.length ? [{
+      severity: 'warning',
+      code: 'orphan-canvas-view',
+      viewIds: orphanCanvasViewIds,
+    }] : []),
+    ...filterLint.findings,
+    ...lintFormatting(views),
+    ...geometryLint.findings,
+  ];
+  return {
+    ...summary,
+    structureSha256: dashboardStructureHash(dashboard),
+    queryViewIds,
+    orphanCanvasViewIds,
+    filterCoverage: filterLint.coverage,
+    geometry: geometryLint.geometry,
+    findings,
+    findingCounts: {
+      error: findings.filter(({ severity }) => severity === 'error').length,
+      warning: findings.filter(({ severity }) => severity === 'warning').length,
+    },
+  };
+}
+
+async function dashboardLint(config, specArg) {
+  const { spec, specPath } = await specFromArg(specArg);
+  const dashboardId = exactId(spec.dashboardId, 'dashboardId');
+  const source = spec.source || 'both';
+  if (!['main', 'main-edit', 'both'].includes(source)) {
+    throw new Error('dashboard lint source must be main, main-edit, or both');
+  }
+  const mainDashboard = await getDashboard(config, dashboardId, 'main');
+  const draftDashboard = await getDashboard(config, dashboardId, 'main-edit');
+  const snapshots = {
+    main: dashboardLintSnapshot(mainDashboard, 'main', spec.thresholds || {}),
+    'main-edit': dashboardLintSnapshot(draftDashboard, 'main-edit', spec.thresholds || {}),
+  };
+  const included = source === 'both' ? ['main', 'main-edit'] : [source];
+  const includedFindings = included.flatMap((key) => snapshots[key].findings);
+  const report = {
+    command: 'dashboard lint',
+    readOnly: true,
+    specPath,
+    dashboardId,
+    source,
+    snapshots: Object.fromEntries(included.map((key) => [key, snapshots[key]])),
+    draftDelta: {
+      addedActiveViewIds: stringDifference(
+        snapshots['main-edit'].activeViewIds,
+        snapshots.main.activeViewIds,
+      ),
+      removedActiveViewIds: stringDifference(
+        snapshots.main.activeViewIds,
+        snapshots['main-edit'].activeViewIds,
+      ),
+      structureChanged: snapshots.main.structureSha256 !== snapshots['main-edit'].structureSha256,
+    },
+    status: includedFindings.some(({ severity }) => severity === 'error') ? 'issues' : 'pass-with-warnings',
+  };
+  if (!includedFindings.length) report.status = 'pass';
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  if (spec.failOnIssues === true && includedFindings.some(({ severity }) => severity === 'error')) {
+    process.exitCode = 1;
+  }
+  if (spec.failOnWarnings === true && includedFindings.length) process.exitCode = 1;
 }
 
 async function dashboardUpdate(config, specArg) {
@@ -800,9 +1071,10 @@ async function main() {
   } else if (command === 'dashboard') {
     const [operation, specArg] = args;
     if (operation === 'inspect') await dashboardInspect(config, specArg);
+    else if (operation === 'lint') await dashboardLint(config, specArg);
     else if (operation === 'update') await dashboardUpdate(config, specArg);
     else if (operation === 'publish') await dashboardPublish(config, specArg);
-    else throw new Error('dashboard operation must be inspect, update, or publish');
+    else throw new Error('dashboard operation must be inspect, lint, update, or publish');
   } else if (command === 'chart') {
     const [operation, specArg] = args;
     if (operation === 'query') await chartQuery(config, specArg);
@@ -817,6 +1089,7 @@ export {
   apiRequest,
   authHeaders,
   dashboardActiveViewIds,
+  dashboardLint,
   dashboardSummary,
   dateRangeMillis,
   encodeCalculatedAxisFields,

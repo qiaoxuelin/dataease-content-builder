@@ -13,6 +13,17 @@ Keep the source untouched. Save a new dashboard with `dataVisualization/saveCanv
 
 Before saving, build a preservation list from the source view: title, chart type, dataset, axes, calculated fields, filters, sorts, tooltips, download/duration measures, result count, and layout. Mark every item as retained, intentionally changed, or intentionally removed. Fail the dry-run when an existing item disappears without an explicit removal. This protects secondary measures that are easy to lose while rebuilding a chart.
 
+## Formatting ownership
+
+Declare whether a ratio is stored as `0..1` or `0..100`. Exactly one display layer owns the suffix and precision:
+
+- Prefer the field formatter for percent, currency, and multiplier formatting.
+- Keep axis, label, and tooltip suffixes empty when the field formatter already supplies the same suffix.
+- If backend values and aggregates are correct but the page shows doubled percent signs, long recurring decimals, or inconsistent precision, repair the formatter rather than changing the metric formula.
+- Use finite axis intervals compatible with the declared scale and precision; verify rendered ticks instead of trusting serialized settings.
+
+Query returned values and actual browser rendering. A correct numeric result is not evidence that its visible format is correct.
+
 ## Cross-dataset query filters
 
 A query condition is not linked merely because fields share a name. Populate:
@@ -100,6 +111,14 @@ DataEase table charts can calculate filtered custom totals without creating a se
 
 The backend returns custom aggregates in `data.customSumResult`; the frontend appends the visible summary row. Verification must compare each returned aggregate with an independent client-side weighted recomputation from the filtered detail rows. A persisted `showSummary` flag alone is insufficient.
 
+## Readability and density
+
+- Compare canvas width, scale settings, component width, and font sizes with a readable same-instance dashboard. Do not hardcode a universal zoom percentage.
+- Separate aggregate overview from high-cardinality detail. Avoid labeling every point when category count makes labels unreadable.
+- Size a table component for its title, header, configured rows, and pager. Adaptive columns still require rendered-page verification.
+- Keep the canvas bottom close to the last intentional component and make the primary content use the intended width. Large unused regions usually indicate a canvas or component geometry problem.
+- Verify desktop and mobile layouts independently when both are provided; a desktop coordinate edit does not prove mobile readability.
+
 ## Verification
 
 After publish:
@@ -118,6 +137,9 @@ Also check layout geometry before visual review:
 - component height fits the configured default row count;
 - canvas height contains the last component;
 - labels, columns, legends, and summaries are not clipped;
+- percent/currency/multiplier suffixes appear once, precision is bounded, and axes contain no recurring-decimal labels;
+- component and font sizes are readable at the dashboard's default opening scale;
+- content density is intentional, without excessive unused canvas space;
 - desktop and mobile layouts preserve reading order;
 - absolute coordinates remain stable after a second dry-run.
 

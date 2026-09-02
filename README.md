@@ -8,7 +8,7 @@ A Codex skill for safely creating and updating DataEase SQL datasets, dashboards
 - Uses dry-run by default for dataset and dashboard mutations.
 - Preserves SQL table IDs and unchanged field identities during dataset updates.
 - Blocks undeclared field removals, type changes, dirty drafts, and dashboard view deltas.
-- Encodes UTC0, country-local-day, weighted-average, maturity, ratio-total, and cross-source safety rules.
+- Encodes UTC0, country-local-day, one-based lifecycle D1, IAP/IAA unit, AEO/Install attribution, weighted-average, maturity, ratio-total, and cross-source safety rules.
 - Detects datasource connection-pool exhaustion and stops unchanged retries.
 - Separates draft verification, publication, API/query evidence, and browser-visible verification.
 
@@ -50,7 +50,7 @@ The helper supports:
 
 - generic signed OpenAPI requests;
 - SQL dataset creation and schema-safe updates;
-- dashboard inspection, guarded draft updates, and guarded publication;
+- dashboard inspection, read-only structural/format/layout lint, guarded draft updates, and guarded publication;
 - representative chart queries and chart-scoped calculated-field cleanup.
 
 See [SKILL.md](SKILL.md), [workflow.md](references/workflow.md), [dashboard-patterns.md](references/dashboard-patterns.md), and [metric-contracts.md](references/metric-contracts.md) for the complete contract.

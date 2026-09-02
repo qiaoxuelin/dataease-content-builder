@@ -20,6 +20,19 @@ For raw game events, default to UTC0 unless the user explicitly requests a local
 
 If one source cannot be cut to the same local-day boundary as another, do not join local-day revenue to UTC0 cost and call it ROI. Either keep both sides at UTC0, obtain a compatible source field, or report that the comparison is not semantically available.
 
+## Standard game analytics conventions
+
+Use these defaults unless an explicit project contract overrides them:
+
+- Raw event timestamps are UTC0. The explicit `全部` aggregate is also cut at UTC0.
+- Concrete-country daily views use the established country-to-minute-offset mapping. Apply the same offset to cohort creation, activity, IAP, IAA, and maturity before calculating lifecycle days.
+- Lifecycle days are one-based for every player metric: the registration/first-play calendar day is visible `D1` and SQL offset `day_n = 0`; visible `D2` maps to `day_n = 1`. Cumulative LTV/ROI `Dn` includes offsets `0..n-1`, while point retention `Dn` tests qualifying activity at offset `n-1`. A cumulative or retention `Dn` is mature only after that reporting-day window is complete. Define qualifying activity separately from registration so D1 retention is not assumed to be 100%. Do not use a D0 business label.
+- If raw IAP money is gross cents, convert to gross USD with `money / 100.0`; when the approved net-revenue contract is 70%, calculate net USD as `money / 100.0 * 0.7`. Do not divide an already-USD field or apply 70% again to an already-net field.
+- If raw IAA revenue is micro-USD, convert with `revenue / 1000000.0`. Do not re-convert a field already expressed in USD.
+- AEO/Install attribution must retain `未归因` and `多来源冲突` instead of forcing them into a paid type. Prefer a direct stable role/user mapping when available, then a documented fallback bridge. Report mapped, unmapped, and conflicting coverage before comparing retention, LTV, or ROI by traffic type.
+
+Field names alone do not prove these source contracts. Confirm raw unit, gross/net status, event-day meaning, and attribution lineage before applying a conversion or label.
+
 ## Ratio and maturity rules
 
 - Totals and filtered summaries use `sum(eligible numerator) / sum(eligible denominator)`, not an average or sum of row-level ratios.
@@ -28,6 +41,7 @@ If one source cannot be cut to the same local-day boundary as another, do not jo
 - For maturity-limited ROI, cost enters the denominator only where the matching cumulative revenue observation is mature and non-null.
 - Guard zero denominators with `nullIf` or the datasource equivalent.
 - Verify the server aggregate against an independent recomputation from returned detail rows.
+- Declare whether ratio values are stored as `0..1` or `0..100`, and let exactly one display layer add the percent suffix and rounding.
 
 For monetary metrics, state conversions explicitly. Example: if game revenue is reported in cents and spend is in USD, convert revenue with `revenue_cents / 100.0` before aggregation and label every displayed amount as USD.
 
@@ -43,6 +57,8 @@ Before creating or changing a dashboard:
 6. Only then add cumulative stages, calculated fields, summaries, and layout.
 
 Prefer a persisted daily aggregate or a same-source join when the cross-source query is repeatedly used, slow, or dependent on unsupported Calcite translation.
+
+Before adding period or region comparisons, estimate `views x periods x regions x datasources`. If the smallest filtered query is already slow or triggers a pool incident, stop and build/reuse a daily aggregate instead of multiplying the raw cross-source query.
 
 ## Filter verification matrix
 
