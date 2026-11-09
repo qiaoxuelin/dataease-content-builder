@@ -7,8 +7,10 @@ A Codex skill for safely creating and updating DataEase SQL datasets, dashboards
 - Resolves dataset and visualization folders independently by full path.
 - Uses dry-run by default for dataset and dashboard mutations.
 - Preserves SQL table IDs and unchanged field identities during dataset updates.
-- Blocks undeclared field removals, type changes, dirty drafts, and dashboard view deltas.
-- Encodes UTC0, country-local-day, one-based lifecycle D1, IAP/IAA unit, AEO/Install attribution, weighted-average, maturity, ratio-total, and cross-source safety rules.
+- Guards undeclared field removals, type changes, and dashboard view deltas; also requires inspecting draft content changes that keep the same view IDs.
+- Makes reporting-day aggregation, lifecycle numbering, IAP/IAA units, attribution, maturity modes, and ratio totals explicit without replacing approved project conventions.
+- Covers numeric and tree sorting, filter parameter types, popup context, frozen summaries, and browser-visible interaction checks.
+- Traces material-library matching, multi-value tags, scheduled imports, and downstream freshness separately.
 - Detects datasource connection-pool exhaustion and stops unchanged retries.
 - Separates draft verification, publication, API/query evidence, and browser-visible verification.
 
@@ -38,7 +40,7 @@ Secret Key: <secret-key>
 API 地址: https://dataease.example.com
 ```
 
-Plaintext HTTP is refused unless the user explicitly authorizes it for the current task and the command includes `--allow-http`.
+Plaintext HTTP is refused unless the user authorizes it for the target instance and scope in the current task and the command includes `--allow-http`.
 
 ## Helper
 
@@ -53,7 +55,7 @@ The helper supports:
 - dashboard inspection, read-only structural/format/layout lint, guarded draft updates, and guarded publication;
 - representative chart queries and chart-scoped calculated-field cleanup.
 
-See [SKILL.md](SKILL.md), [workflow.md](references/workflow.md), [dashboard-patterns.md](references/dashboard-patterns.md), and [metric-contracts.md](references/metric-contracts.md) for the complete contract.
+Start with [SKILL.md](SKILL.md). Supporting references cover [workflow and publication](references/workflow.md), [layout and sorting](references/dashboard-patterns.md), [metric contracts](references/metric-contracts.md), [filters and popups](references/interactions.md), and [material matching and refresh](references/data-freshness.md).
 
 ## Security
 

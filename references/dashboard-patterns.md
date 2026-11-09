@@ -11,7 +11,7 @@ DataEase stores views, canvas components, styles, and query controls as large ve
 
 Keep the source untouched. Save a new dashboard with `dataVisualization/saveCanvas`, or update the confirmed target with `dataVisualization/updateCanvas`. Publish with `dataVisualization/updatePublishStatus` and explicit active view IDs.
 
-Before saving, build a preservation list from the source view: title, chart type, dataset, axes, calculated fields, filters, sorts, tooltips, download/duration measures, result count, and layout. Mark every item as retained, intentionally changed, or intentionally removed. Fail the dry-run when an existing item disappears without an explicit removal. This protects secondary measures that are easy to lose while rebuilding a chart.
+Before saving, build a preservation list from the source view: title, chart type, dataset, axes, calculated fields, filters, sorts, tooltips, download/duration measures, result count, and layout. Mark every item as retained, intentionally changed, or intentionally removed. Fail the dry-run when an existing item disappears without an explicit removal. Cloned metric explanations must be checked against the new SQL, not preserved blindly: source, date boundary, formula, denominator, exclusions, maturity, and unit must describe the actual chart.
 
 ## Formatting ownership
 
@@ -21,21 +21,11 @@ Declare whether a ratio is stored as `0..1` or `0..100`. Exactly one display lay
 - Keep axis, label, and tooltip suffixes empty when the field formatter already supplies the same suffix.
 - If backend values and aggregates are correct but the page shows doubled percent signs, long recurring decimals, or inconsistent precision, repair the formatter rather than changing the metric formula.
 - Use finite axis intervals compatible with the declared scale and precision; verify rendered ticks instead of trusting serialized settings.
+- For dense tables, put a shared percent/currency unit in the header or title when requested and omit repeated cell suffixes without changing the numeric scale. Integer counts normally use no decimals; money and rates normally use two, while small LTV/CPI values may need more. Keep precision consistent across cells, cards, axes, and hover values.
 
 Query returned values and actual browser rendering. A correct numeric result is not evidence that its visible format is correct.
 
-## Cross-dataset query filters
-
-A query condition is not linked merely because fields share a name. Populate:
-
-- `checkedFields`: every linked view ID.
-- `checkedFieldsMap`: view ID to that view's dataset field ID.
-- `treeCheckedList` with the same mapping.
-- Empty per-view arrays/maps expected by the component schema.
-
-Use the field ID from each chart's own dataset. This is especially important when a version filter controls both a funnel dataset and a timing dataset.
-
-Keep view IDs as exact strings in every mapping. When a filter returns no data, debug in this order: confirm the view-to-field mapping, confirm operator and value types, query the field without the filter, then inspect date grain and time-zone semantics.
+For filter mappings, parameter types, tree expansion, and popup behavior, use [interactions.md](interactions.md).
 
 ## Useful defaults
 
@@ -60,17 +50,7 @@ The chart-data API still expects epoch milliseconds for a `between` filter even 
 
 ### Country-local days and `全部`
 
-For daily cohort, retention, revenue, or LTV dashboards with a region selector, use one stable contract:
-
-- Raw database event timestamps are UTC0. Default date and hour dimensions use the raw timestamp without an offset; do not infer UTC+8 from the operator's browser or workstation timezone.
-- `全部` is a dedicated aggregate branch whose registration and event dates are cut at the raw UTC0 boundary.
-- Each concrete country uses an explicit configured minute offset to derive its local dates.
-- Apply the same offset to cohort creation, activity, payment, ad-revenue, and maturity dates before joining or comparing day numbers.
-- Keep the country-to-offset mapping in project SQL/config and reuse the project's established mapping. Do not infer offsets from the operator's browser or the DataEase server.
-
-An explicit `全部` row is required when local-day country rows are present; removing the country constraint would mix differently cut calendar days. Configure the selector to default to the explicit `全部` value. For dashboards that do not use local-day country branches, a conventional unfiltered “all” may still be appropriate, but do not conflate the two models.
-
-A ClickHouse implementation can join a small offset table and derive `toDate(addMinutes(timestamp, offset_min))`. The `全部` branch uses `offset_min = 0`. Validate at least one non-zero-offset country and the UTC0 aggregate over the same visible date range.
+Use the project's aggregate model from [metric-contracts.md](metric-contracts.md): a common timezone or a total of country-local reporting days. The selector's label alone does not choose the model. Keep timezone details in a title tooltip or compact explanation when they are informational rather than comparison columns.
 
 ### Latest version
 
@@ -85,19 +65,18 @@ For a required single-select version:
 
 Both `sortId` and `sort` are needed; otherwise the first returned option can be arbitrary. Verify the actual rendered value. If version strings are not lexically sortable, add a numeric version-order field or set a validated explicit default rather than claiming “latest.”
 
-## Ordering and metrics
+## Ordering
 
 Chart category order should come from a stable ordinal field or an explicit custom sort. Do not let label alphabetization redefine a process.
 
-Never add pre-aggregated percentiles across dates or regions. Either keep P50/P95 aggregated at the exact filter grain or expose raw durations to a chart engine that can calculate percentiles correctly. For an overall duration, calculate the timestamp difference between the true process begin/end events; do not sum optional module durations.
+- For a metric ranking, inspect effective priority as well as each field's `sort`. A dimension's alphabetical order can take precedence over the intended numeric metric. Where supported, set `sortPriority` explicitly using field IDs, metric first, then stable tie-break dimensions. Verify the same-version schema rather than assuming this property alone is sufficient.
+- Choose a default suited to the task, such as spend for delivery scale or a qualified efficiency measure for performance. Sort numbers as numbers, define null placement, and keep low-sample status visible. Preserve existing sort switches and test ascending, descending, and reset/default behavior.
+- For tree tables, sort siblings within each parent and define each level separately; do not globally flatten children into a ranking. Date order, traffic-type order, and creative ranking can differ. Totals should retain their requested fixed position.
+- Compare the ordered IDs and values before and after a sort-only change. Pivot rendering can reorder API rows; inspect the rendered tree too. A persisted `tableHeaderSort = true` does not prove that a particular tree-table implementation exposes clickable sorting.
 
-For a ratio total, aggregate source values rather than visible percentages: `sum(eligible numerator) / sum(eligible denominator)`. Averages of daily ROI, conversion rate, retention rate, or LTV multipliers are not valid totals unless the metric contract explicitly proves equal weights. For maturity-limited cumulative metrics, include cost or cohort weight only for rows whose matching numerator is mature and non-null.
+## Summaries
 
-### Weighted means
-
-Do not use a plain average when cohort rows have different population sizes. For metric `m` and weight `w`, calculate `sum(m * w) / sum(w)` over rows where `m` is present. Exclude the weight of null or immature metric rows from the denominator and guard division by zero with `nullIf` or the datasource equivalent.
-
-Before building, state whether the result belongs in an embedded table summary row or a separate chart. Preserve that placement choice in the dry-run.
+Use [metric-contracts.md](metric-contracts.md) for ratio totals, distinct counts, weighting, and maturity. Never add pre-aggregated percentiles across dates or regions; recompute at the requested grain. For an overall duration, use true process begin/end events rather than summing optional module durations. Declare whether the result belongs in an embedded summary row or a separate chart before building.
 
 ### Embedded custom summary rows
 
@@ -109,13 +88,16 @@ DataEase table charts can calculate filtered custom totals without creating a se
 - For `table-normal`, displayed metrics are normally in `yAxis`; for `table-info`, the summary selector uses numeric fields in `xAxis`.
 - Hide non-metric cells such as registration count when their aggregation would make the “weighted mean” label misleading.
 
-The backend returns custom aggregates in `data.customSumResult`; the frontend appends the visible summary row. Verification must compare each returned aggregate with an independent client-side weighted recomputation from the filtered detail rows. A persisted `showSummary` flag alone is insufficient.
+The backend returns custom aggregates in `data.customSumResult`; the frontend appends the visible summary row. Compare it with an independent calculation from complete, compatible-grain detail or a source aggregate. A persisted `showSummary` flag alone is insufficient. When a frozen bottom total is requested, verify it stays visible while scrolling; placing a literal total last in SQL does not freeze it. Totals must cover the selected dataset, not just the visible page.
 
 ## Readability and density
 
+- Arrange the page around the user's comparison: key metrics first, supporting trends and detail below. Group date/user scope/traffic controls together and region/continent/market controls together when appropriate. Keep query/reset controls visible. Prefer a supported flat single-select for two explicit states over a decorative pseudo-switch; do not promise native controls without testing the installed version.
+- Choose chart types by purpose: trends for time, stacked bars for composition, scatter for cost/quality tradeoffs, and radar only for defined comparable normalized dimensions. Keep metric colors consistent across views. Remove duplicate legends and empty decorative cards.
 - Compare canvas width, scale settings, component width, and font sizes with a readable same-instance dashboard. Do not hardcode a universal zoom percentage.
 - Separate aggregate overview from high-cardinality detail. Avoid labeling every point when category count makes labels unreadable.
-- Size a table component for its title, header, configured rows, and pager. Adaptive columns still require rendered-page verification.
+- Size a table for its title, header, rows, and summary/pager. Give numeric columns enough room for realistic values; keep region columns compact and long creative names available on hover. Check card number/unit baselines so large values are not clipped.
+- For no-pagination views, configure continuous scrolling and an adequate result limit, then reconcile returned row count against the filtered source. Hiding a pager or enlarging a chart does not fetch missing rows. Check normal, enlarged, and popup sizes, including internal scroll areas and frozen totals.
 - Keep the canvas bottom close to the last intentional component and make the primary content use the intended width. Large unused regions usually indicate a canvas or component geometry problem.
 - Verify desktop and mobile layouts independently when both are provided; a desktop coordinate edit does not prove mobile readability.
 
@@ -126,21 +108,9 @@ After publish:
 1. Fetch the dashboard and parse `canvasViewInfo` and `componentData`.
 2. Confirm parent folder, publish status, view IDs, dataset IDs, axes, stages, sort, and filter mappings.
 3. Query each representative view through `chartData/getData`, including at least one date range and each materially different region/time-zone branch.
-4. For custom summaries, compare `customSumResult` with an independent calculation over the returned detail rows.
+4. Verify custom summaries and complete result counts as described above.
 5. Open the preview page in a browser.
 6. Verify visible default values, labels, summary-row placement, legends, clipping, overlap, loading state, and representative results.
 7. Reload once to ensure defaults are durable rather than residual browser state.
-
-Also check layout geometry before visual review:
-
-- no unintended overlap among query controls and charts;
-- component height fits the configured default row count;
-- canvas height contains the last component;
-- labels, columns, legends, and summaries are not clipped;
-- percent/currency/multiplier suffixes appear once, precision is bounded, and axes contain no recurring-decimal labels;
-- component and font sizes are readable at the dashboard's default opening scale;
-- content density is intentional, without excessive unused canvas space;
-- desktop and mobile layouts preserve reading order;
-- absolute coordinates remain stable after a second dry-run.
 
 If browser control is unavailable, report API/configuration verification as complete and visual verification as outstanding. Do not describe server-side chart data as rendered-page proof.

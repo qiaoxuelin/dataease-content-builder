@@ -4,7 +4,7 @@
 
 Prefer a project-local credential file supplied by the user. The helper accepts labels such as `Access Key`, `Secret Key`, `地址`, `API 地址`, or `查看api`. Do not copy the credential file into the skill.
 
-When the endpoint is plaintext HTTP, pass `--allow-http` only after the user explicitly authorizes plaintext transport for the target instance. ASK signs the request but does not encrypt HTTP traffic.
+When the endpoint is plaintext HTTP, pass `--allow-http` only after the user authorizes plaintext transport for the target instance and scope. Reuse that authorization within the current task. ASK signs the request but does not encrypt HTTP traffic.
 
 ## ID safety
 
@@ -37,13 +37,13 @@ Persist resource IDs in a local JSON spec. A repeat run should update the same r
 
 Use this sequence for updates:
 
-1. Fetch the published `main` resource and confirm its ID, parent ID, current view IDs, and target name.
+1. Fetch `main` and `main-edit`; confirm ID, parent ID, view IDs, and target name. Compare content as well as IDs: an unchanged view set can still contain someone else's filter, formula, or layout edits. Preserve or explicitly resolve pre-existing draft changes before writing.
 2. Build and dry-run the desired payload, explicitly listing created, updated, removed, and retained views.
 3. Call `updateCanvas` only for an authorized live write.
 4. Fetch `main-edit` immediately and verify the draft's components, views, layout, filters, formulas, and representative chart queries.
 5. If verification fails, stop publication and fetch `main-edit` again before deciding whether to repair or use `recoverToPublished`. Do not assume a thrown verification error reverted the draft.
 6. Publish with explicit active view IDs only after the draft passes.
-7. Fetch `main`, rerun representative queries, and then perform any explicitly authorized orphan cleanup.
+7. Fetch `main`, rerun representative queries, verify changed interactions on the page, and then perform any explicitly authorized orphan cleanup. For jump/outer-parameter definitions stored outside the canvas, also follow [interactions.md](interactions.md).
 
 Keep recovery and cleanup separate from the update. A request to revise a chart does not automatically authorize deleting unrelated resources or restoring the whole dashboard.
 
@@ -186,6 +186,8 @@ Use `chart query @spec.json` for repeatable data verification. A declarative `da
 
 The helper also exports its ASK transport, exact-ID, date-range, dashboard, and calculated-field encoding functions for project scripts. Import those functions instead of copying authentication code.
 
+Keep reusable project modules import-safe: importing utilities must not read credentials, prepare a live payload, publish, or interpret the caller's `process.argv`. Use an explicit direct-execution guard, as the bundled helper does, and invoke mutations through named functions. Keep version-specific payload builders in the project until their behavior is demonstrated reusable; do not add a generic write helper based on a single instance's JSON shape.
+
 ## Query budget and datasource pool safety
 
 - Reuse discovery results and query each materially different filter/time-zone branch once. Do not loop over the same chart merely to see whether an unchanged error disappears.
@@ -210,17 +212,6 @@ Read back both draft and published resources. A hidden component or orphan calcu
 
 ## Completion evidence
 
-Report:
+Keep a reproducible task artifact with the resource paths/IDs, SQL/spec files, schema/consumer diff, draft/published delta, and relevant metric/filter contracts. Record representative query parameters, results/timings, and visual/interaction checks. For sync work, include the downstream freshness evidence from [data-freshness.md](data-freshness.md).
 
-- Dataset and visualization full paths, IDs, and create/update status.
-- Datasource ID and SQL/spec files used.
-- Dashboard ID, publish status, chart IDs, and preview URL.
-- Default filter values and which views each filter controls.
-- Dataset schema diff, preserved field identities, and the complete declared consumer list.
-- Published-versus-draft active-view delta and every explicitly allowed addition/removal.
-- Daily time-zone contract: raw database event timestamps are UTC0, the default path applies no offset, `全部 = UTC0`, and concrete-country offsets come from an explicit source when local-day reporting is requested.
-- Currency/unit conversion, maturity/null policy, ratio numerator/denominator, and aggregate formula for financial or cohort metrics.
-- Validation query count and whether any datasource pool/capacity boundary was encountered.
-- Data preview checks and browser-level visual checks.
-- If visual verification was unavailable, the exact API/query evidence completed and the remaining visual-review boundary.
-- Any remaining semantic boundary, such as missing upstream install attribution or role-creation events.
+The user-facing completion should state what changed, where to view it, what was verified, and any remaining limit. Do not dump every ID for a small styling change. Distinguish saved configuration, successful queries, actual page behavior, and scheduled operation; report unavailable verification honestly.
